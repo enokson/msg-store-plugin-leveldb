@@ -1,7 +1,11 @@
 [package]
 name = "msg-store-plugin-leveldb"
+description = "A leveldb backend plugin for the msg-store"
 version = "0.1.0"
 edition = "2018"
+license = "MIT"
+repository = "https://github.com/msg-store/msg-store-plugin-leveldb"
+authors = ["Joshua Enokson <kilograhm@pm.me>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
