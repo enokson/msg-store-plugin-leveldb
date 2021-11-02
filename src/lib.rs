@@ -2,8 +2,6 @@ use bincode::{serialize, deserialize};
 use msg_store::{
     Keeper,
     store::{
-        GroupId,
-        MsgByteSize,
         Package,
         PacketMetaData,
         Store
@@ -107,8 +105,8 @@ impl Leveldb {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct DbMetadata {
-    priority: GroupId,
-    byte_size: MsgByteSize
+    priority: i32,
+    byte_size: i32
 }
 
 impl Keeper for Leveldb {
