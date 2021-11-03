@@ -1,13 +1,11 @@
 use bincode::{serialize, deserialize};
-pub use msg_store::{
-    self, 
+use msg_store::{
     Keeper,
     store::{
         Package,
         PacketMetaData,
         Store
     },
-    Storage,
     uuid::Uuid
 };
 use db_key::Key;
