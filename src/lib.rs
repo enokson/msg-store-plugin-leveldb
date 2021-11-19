@@ -1,5 +1,6 @@
 use bincode::{serialize, deserialize};
 use msg_store::{
+    errors::{ Error, DbError },
     Keeper,
     store::{
         Package,
@@ -66,8 +67,12 @@ impl Key for Id {
     }
 }
 
-pub fn open(location: &Path) -> LevelStore {
-    Store::open(Leveldb::new(location))
+pub fn open(location: &Path) -> Result<LevelStore, Error> {
+    let plugin = match Leveldb::new(location) {
+        Ok(plugin) => Ok(plugin),
+        Err(db_error) => Err(Error::DbError(db_error))
+    }?;
+    Store::open(plugin)
 }
 
 pub struct Leveldb {
@@ -76,7 +81,7 @@ pub struct Leveldb {
 }
 
 impl Leveldb {
-    pub fn new(dir: &Path) -> Leveldb {
+    pub fn new(dir: &Path) -> Result<Leveldb, DbError> {
         create_dir_all(&dir).expect("Could not create db location dir.");
 
         let mut msgs_path = dir.to_path_buf();
@@ -93,13 +98,19 @@ impl Leveldb {
         let mut msg_data_options = Options::new();
         msg_data_options.create_if_missing = true;
 
-        let msgs = Database::open(msgs_path, msgs_options).expect("Could not open msgs database");
-        let data = Database::open(Path::new(msg_data_path), msg_data_options).expect("Could not open data database");
+        let msgs = match Database::open(msgs_path, msgs_options) {
+            Ok(db) => Ok(db),
+            Err(error) => Err(DbError(error.to_string()))
+        }?;
+        let data = match Database::open(Path::new(msg_data_path), msg_data_options) {
+            Ok(db) => Ok(db),
+            Err(error) => Err(DbError(error.to_string()))
+        }?;
         
-        Leveldb {
+        Ok(Leveldb {
             msgs,
             data
-        }
+        })
     }
 }
 
@@ -110,34 +121,61 @@ struct DbMetadata {
 }
 
 impl Keeper for Leveldb {
-    fn add(&mut self, package: &Package) {
+    fn add(&mut self, package: &Package) -> Result<(), DbError> {
         let data = DbMetadata {
             priority: package.priority,
             byte_size: package.byte_size
         };
-        let serialized_data = serialize(&data).expect("Could not serialize data");
-        let msg = serialize(&package.msg).expect("Could not serialize msg");
-        self.data.put(WriteOptions::new(), Id::from_uuid(package.uuid), &serialized_data).expect("Could not insert metadata");
-        self.msgs.put(WriteOptions::new(), Id::from_uuid(package.uuid), &msg).expect("Could not insert msg");     
+        let serialized_data = match serialize(&data) {
+            Ok(data) => Ok(data),
+            Err(error) => Err(DbError(error.to_string()))
+        }?;
+        let msg = match serialize(&package.msg) {
+            Ok(data) => Ok(data),
+            Err(error) => Err(DbError(error.to_string()))
+        }?;
+        match self.data.put(WriteOptions::new(), Id::from_uuid(package.uuid), &serialized_data) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(DbError(error.to_string()))
+        }?;
+        match self.msgs.put(WriteOptions::new(), Id::from_uuid(package.uuid), &msg) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(DbError(error.to_string()))
+        }?;
+        Ok(())  
     }
-    fn get(&mut self, uuid: &Uuid) -> Option<String> {
-        match self.msgs.get(ReadOptions::new(), Id::from_uuid(*uuid)).expect("Could not get msg") {
-            Some(serialized_msg) => Some(deserialize(&serialized_msg).expect("Could not deserialize msg")),
-            None => None
-        }        
+    fn get(&mut self, uuid: &Uuid) -> Result<Option<String>, DbError> {
+        let data = match self.msgs.get(ReadOptions::new(), Id::from_uuid(*uuid)) {
+            Ok(data) => Ok(data),
+            Err(error) => Err(DbError(error.to_string()))
+        }?;
+        if let Some(data) = data {
+            match deserialize(&data) {
+                Ok(data) => Ok(data),
+                Err(error) => Err(DbError(error.to_string()))
+            }
+        } else {
+            Ok(None)
+        }   
     }
-    fn del(&mut self, uuid: &Uuid) {
-        self.msgs.delete(WriteOptions::new(), Id::from_uuid(*uuid)).expect("Could not delete msg");
+    fn del(&mut self, uuid: &Uuid) -> Result<(), DbError> {
+        match self.msgs.delete(WriteOptions::new(), Id::from_uuid(*uuid)) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(DbError(error.to_string()))
+        }
     }
-    fn fetch(&mut self) -> Vec<PacketMetaData> {
-        self.data.iter(ReadOptions::new()).map(|(id, data)| {
-            let db_metadata: DbMetadata = deserialize(&data).expect("Could not deserialize data");
-            PacketMetaData { 
+    fn fetch(&mut self) -> Result<Vec<PacketMetaData>, DbError> {
+        self.data.iter(ReadOptions::new()).map(|(id, data)| -> Result<PacketMetaData, DbError> {
+            let db_metadata: DbMetadata = match deserialize(&data) {
+                Ok(data) => Ok(data),
+                Err(error) => Err(DbError(error.to_string()))
+            }?;
+            Ok(PacketMetaData { 
                 uuid: id.to_uuid(),
                 priority: db_metadata.priority, 
                 byte_size: db_metadata.byte_size
-            }
-        }).collect::<Vec<PacketMetaData>>()
+            })
+        }).collect::<Result<Vec<PacketMetaData>, DbError>>()
     }
 }
 
