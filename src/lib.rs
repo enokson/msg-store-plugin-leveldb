@@ -116,8 +116,8 @@ impl Leveldb {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct DbMetadata {
-    priority: i32,
-    byte_size: i32
+    priority: u32,
+    byte_size: u32
 }
 
 impl Keeper for Leveldb {
