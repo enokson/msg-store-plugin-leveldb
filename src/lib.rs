@@ -1,14 +1,6 @@
-use bincode::{serialize, deserialize};
-use msg_store::{
-    errors::{ Error, DbError },
-    Keeper,
-    store::{
-        Package,
-        PacketMetaData,
-        Store
-    },
-    uuid::Uuid
-};
+use bincode::{serialize, deserialize, deserialize_from};
+use msg_store::uuid::Uuid;
+use msg_store_db_plugin::Db;
 use db_key::Key;
 use leveldb::{
     database::Database,
@@ -20,38 +12,43 @@ use leveldb::{
         WriteOptions
     }
 };
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use std::{
     fs::create_dir_all,
-    path::Path
+    path::Path,
+    marker::PhantomData
 };
 
-pub type LevelStore = Store<Leveldb>;
+// pub type LevelStore = Store<Leveldb>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
 pub struct Id {
+    pub priority: u32,
     pub timestamp: u128,
     pub sequence: u32
 }
 impl Id {
     pub fn to_string(&self) -> String {
-        format!("{}-{}", self.timestamp, self.sequence)
+        format!("{}-{}-{}", self.priority, self.timestamp, self.sequence)
     }
     pub fn from_string(id: &str) -> Uuid {
-        let split_str = id.split("-").collect::<Vec<&str>>();
-        Uuid { 
-            timestamp: split_str[0].parse().expect("Could not parse timestamp"), 
-            sequence: split_str[0].parse().expect("Could not parse sequence")
-        }
+        Uuid::from_string(id).unwrap()
+        // let split_str = id.split("-").collect::<Vec<&str>>();
+        // Uuid { 
+        //     timestamp: split_str[0].parse().expect("Could not parse timestamp"), 
+        //     sequence: split_str[0].parse().expect("Could not parse sequence")
+        // }
     }
     pub fn from_uuid(uuid: Uuid) -> Self {
         Self {
+            priority: uuid.priority,
             timestamp: uuid.timestamp,
             sequence: uuid.sequence
         }
     }
     pub fn to_uuid(self) -> Uuid {
-        Uuid { 
+        Uuid {
+            priority: self. priority,
             timestamp: self.timestamp, 
             sequence: self.sequence
         }
@@ -67,21 +64,14 @@ impl Key for Id {
     }
 }
 
-pub fn open(location: &Path) -> Result<LevelStore, Error> {
-    let plugin = match Leveldb::new(location) {
-        Ok(plugin) => Ok(plugin),
-        Err(db_error) => Err(Error::DbError(db_error))
-    }?;
-    Store::open(plugin)
-}
-
-pub struct Leveldb {
+pub struct Leveldb<T> {
     pub msgs: Database<Id>,
-    pub data: Database<Id>
+    pub data: Database<Id>,
+    pub msg_type: PhantomData<T>
 }
 
-impl Leveldb {
-    pub fn new(dir: &Path) -> Result<Leveldb, DbError> {
+impl<T> Leveldb<T> {
+    pub fn new(dir: &Path) -> Result<Leveldb<T>, String> {
         create_dir_all(&dir).expect("Could not create db location dir.");
 
         let mut msgs_path = dir.to_path_buf();
@@ -100,16 +90,17 @@ impl Leveldb {
 
         let msgs = match Database::open(msgs_path, msgs_options) {
             Ok(db) => Ok(db),
-            Err(error) => Err(DbError(error.to_string()))
+            Err(error) => Err(error.to_string())
         }?;
         let data = match Database::open(Path::new(msg_data_path), msg_data_options) {
             Ok(db) => Ok(db),
-            Err(error) => Err(DbError(error.to_string()))
+            Err(error) => Err(error.to_string())
         }?;
         
         Ok(Leveldb {
             msgs,
-            data
+            data,
+            msg_type: PhantomData
         })
     }
 }
@@ -120,62 +111,56 @@ struct DbMetadata {
     byte_size: u32
 }
 
-impl Keeper for Leveldb {
-    fn add(&mut self, package: &Package) -> Result<(), DbError> {
-        let data = DbMetadata {
-            priority: package.priority,
-            byte_size: package.byte_size
+impl<'a, T: Serialize + DeserializeOwned> Db<T> for Leveldb<T> {
+    fn add(&mut self, uuid: Uuid, msg: T, msg_byte_size: u32) -> Result<(), String> {
+        let serialized_data = match serialize(&msg_byte_size) {
+            Ok(data) => Ok(data),
+            Err(error) => Err(error.to_string())
+        }?;
+        let msg = match serialize(&msg) {
+            Ok(data) => Ok(data),
+            Err(error) => Err(error.to_string())
+        }?;
+        match self.data.put(WriteOptions::new(), Id::from_uuid(uuid), &serialized_data) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.to_string())
+        }?;
+        match self.msgs.put(WriteOptions::new(), Id::from_uuid(uuid), &msg) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.to_string())
+        }?;
+        Ok(())
+    }
+    fn get(&mut self, uuid: Uuid) -> Result<T, String> {
+        let data = match self.msgs.get(ReadOptions::new(), Id::from_uuid(uuid)) {
+            Ok(data) => match data {
+                Some(data) => data,
+                None => { return Err("msg not found".to_string()) }
+            },
+            Err(error) => return Err(error.to_string())
         };
-        let serialized_data = match serialize(&data) {
-            Ok(data) => Ok(data),
-            Err(error) => Err(DbError(error.to_string()))
-        }?;
-        let msg = match serialize(&package.msg) {
-            Ok(data) => Ok(data),
-            Err(error) => Err(DbError(error.to_string()))
-        }?;
-        match self.data.put(WriteOptions::new(), Id::from_uuid(package.uuid), &serialized_data) {
-            Ok(_) => Ok(()),
-            Err(error) => Err(DbError(error.to_string()))
-        }?;
-        match self.msgs.put(WriteOptions::new(), Id::from_uuid(package.uuid), &msg) {
-            Ok(_) => Ok(()),
-            Err(error) => Err(DbError(error.to_string()))
-        }?;
-        Ok(())  
+
+        let deserialized_data = match deserialize_from(&*data) {
+            Ok(deserialized_data) => Ok(deserialized_data),
+            Err(error) => Err(error.to_string())
+        };
+
+        deserialized_data  
     }
-    fn get(&mut self, uuid: &Uuid) -> Result<Option<String>, DbError> {
-        let data = match self.msgs.get(ReadOptions::new(), Id::from_uuid(*uuid)) {
-            Ok(data) => Ok(data),
-            Err(error) => Err(DbError(error.to_string()))
-        }?;
-        if let Some(data) = data {
-            match deserialize(&data) {
-                Ok(data) => Ok(data),
-                Err(error) => Err(DbError(error.to_string()))
-            }
-        } else {
-            Ok(None)
-        }   
-    }
-    fn del(&mut self, uuid: &Uuid) -> Result<(), DbError> {
-        match self.msgs.delete(WriteOptions::new(), Id::from_uuid(*uuid)) {
+    fn del(&mut self, uuid: Uuid) -> Result<(), String> {
+        match self.msgs.delete(WriteOptions::new(), Id::from_uuid(uuid)) {
             Ok(_) => Ok(()),
-            Err(error) => Err(DbError(error.to_string()))
+            Err(error) => Err(error.to_string())
         }
     }
-    fn fetch(&mut self) -> Result<Vec<PacketMetaData>, DbError> {
-        self.data.iter(ReadOptions::new()).map(|(id, data)| -> Result<PacketMetaData, DbError> {
-            let db_metadata: DbMetadata = match deserialize(&data) {
+    fn fetch(&mut self) -> Result<Vec<(Uuid, u32)>, String> {
+        self.data.iter(ReadOptions::new()).map(|(id, data)| -> Result<(Uuid, u32), String> {
+            let msg_byte_size: u32 = match deserialize(&data) {
                 Ok(data) => Ok(data),
-                Err(error) => Err(DbError(error.to_string()))
+                Err(error) => Err(error.to_string())
             }?;
-            Ok(PacketMetaData { 
-                uuid: id.to_uuid(),
-                priority: db_metadata.priority, 
-                byte_size: db_metadata.byte_size
-            })
-        }).collect::<Result<Vec<PacketMetaData>, DbError>>()
+            Ok((id.to_uuid(), msg_byte_size))
+        }).collect::<Result<Vec<(Uuid, u32)>, String>>()
     }
 }
 
