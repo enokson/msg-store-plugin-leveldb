@@ -9,5 +9,13 @@ edition = "2018"
 bincode = { version = "1.3.3" }
 db-key = { version = "0.0.5" }
 leveldb = { version = "0.8.6" }
-msg-store = "0.1.0"
+msg-store-db-plugin = { git = "https://github.com/msg-store/msg-store-db-plugin/", rev = "dab713fe438829ddde043ac4468ecbac56c3d453" }
+msg-store = { git = "https://github.com/msg-store/msg-store/", rev = "55e4a422aca650b172a45aa961ef901576bb8e84" }
 serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+bencher = "0.1.5"
+
+[[bench]]
+name = "general"
+harness = false
