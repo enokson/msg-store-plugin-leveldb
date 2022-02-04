@@ -35,7 +35,7 @@ pub struct Leveldb {
 }
 
 impl Leveldb {
-    pub fn new(dir: &Path) -> Leveldb {
+    pub fn new(dir: &Path) -> Result<Leveldb, String> {
 
         let mut msgs_path = dir.to_path_buf();
         msgs_path.push("msgs");
@@ -51,13 +51,23 @@ impl Leveldb {
         let mut msg_data_options = Options::new();
         msg_data_options.create_if_missing = true;
 
-        let msgs = Database::open(msgs_path, msgs_options).expect("Could not open msgs database");
-        let data = Database::open(Path::new(msg_data_path), msg_data_options).expect("Could not open data database");
+        let msgs = match Database::open(msgs_path, msgs_options) {
+            Ok(msgs) => msgs,
+            Err(error) => {
+                return Err(format!("PLUGIN_LEVEL_DB_ERROR_CODE: 034d85df-3e0e-4522-953c-af31cb6a7550. Could not open msgs database: {}", error.to_string()));
+            }
+        };
+        let data = match Database::open(Path::new(msg_data_path), msg_data_options){
+            Ok(data) => data,
+            Err(error) => {
+                return Err(format!("PLUGIN_LEVEL_DB_ERROR_CODE: ef9cb8ae-8775-4cfc-8725-074e762287aa. Could not open msgs database: {}", error.to_string()));
+            } 
+        };
         
-        Leveldb {
+        Ok(Leveldb {
             msgs,
             data
-        }
+        })
     }
 }
 
@@ -152,11 +162,11 @@ mod tests {
             // get level instance
             // add one message
             // force out of scope
-            let mut level = Leveldb::new(&tmp_dir);
+            let mut level = Leveldb::new(&tmp_dir).unwrap();
             level.add(uuid, msg.clone(), msg_byte_size).unwrap();
         }
         // get level instance
-        let mut level = Leveldb::new(&tmp_dir);
+        let mut level = Leveldb::new(&tmp_dir).unwrap();
         
         // fetch messages
         let msgs = level.fetch().unwrap();

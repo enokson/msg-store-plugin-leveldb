@@ -27,7 +27,7 @@ fn dir_teardown() {
 
 fn writes() {
     dir_setup();
-    let mut level = Leveldb::new(Path::new(TMP_PATH));
+    let mut level = Leveldb::new(Path::new(TMP_PATH)).unwrap();
     let msgs = (0..100_000).map(|i| {
         let msg = Bytes::copy_from_slice("hello, world!".as_bytes());
         let ln = msg.len() as u32;
