@@ -5,6 +5,7 @@ use msg_store_plugin_leveldb::Leveldb;
 use std::{
     fs::{remove_dir_all,create_dir_all},
     path::Path,
+    sync::Arc,
     time::Instant
 };
 
@@ -32,7 +33,7 @@ fn writes() {
         let msg = Bytes::copy_from_slice("hello, world!".as_bytes());
         let ln = msg.len() as u32;
         (Uuid::from_string(&format!("1-1-{}", i)).unwrap(), msg, ln)
-    }).collect::<Vec<(Uuid, Bytes, u32)>>();
+    }).collect::<Vec<(Arc<Uuid>, Bytes, u32)>>();
     let start = Instant::now();
     let _list = msgs.into_iter().map(|(uuid, msg, ln)| {
         level.add(uuid, msg.clone(), ln).unwrap();

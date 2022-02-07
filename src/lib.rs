@@ -13,7 +13,10 @@ use leveldb::{
     }
 };
 use serde::{Serialize, Deserialize};
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::Arc
+};
 
 #[derive(Deserialize, Serialize)]
 pub struct Id(Vec<u8>);
@@ -72,25 +75,25 @@ impl Leveldb {
 }
 
 impl Db for Leveldb {
-    fn add(&mut self, uuid: Uuid, msg: Bytes, msg_byte_size: u32) -> Result<(), String> {
+    fn add(&mut self, uuid: Arc<Uuid>, msg: Bytes, msg_byte_size: u32) -> Result<(), String> {
         let uuid_bytes = uuid.to_string().as_bytes().to_vec();
         self.data.put(WriteOptions::new(), Id(uuid_bytes.clone()), format!("{}", msg_byte_size).as_bytes()).expect("Could not insert metadata");
         self.msgs.put(WriteOptions::new(), Id(uuid_bytes), &msg).expect("Could not insert msg");
         Ok(())
     }
-    fn get(&mut self, uuid: Uuid) -> Result<Bytes, String> {
+    fn get(&mut self, uuid: Arc<Uuid>) -> Result<Bytes, String> {
         let uuid_bytes = uuid.to_string().as_bytes().to_vec();
         match self.msgs.get(ReadOptions::new(), Id(uuid_bytes)).expect("Could not get msg") {
             Some(msg) => Ok(Bytes::copy_from_slice(&msg)),
             None => Err("Message not found".to_string())
         }
     }
-    fn del(&mut self, uuid: Uuid) -> Result<(), String> {
+    fn del(&mut self, uuid: Arc<Uuid>) -> Result<(), String> {
         let uuid_bytes = uuid.to_string().as_bytes().to_vec();
         self.msgs.delete(WriteOptions::new(), Id(uuid_bytes)).expect("Could not delete msg");
         Ok(())
     }
-    fn fetch(&mut self) -> Result<Vec<(Uuid, u32)>, String> {
+    fn fetch(&mut self) -> Result<Vec<(Arc<Uuid>, u32)>, String> {
         self.data.iter(ReadOptions::new()).map(|(id, data)| {
             let data = match String::from_utf8(data) {
                 Ok(data) => data,
@@ -117,7 +120,7 @@ impl Db for Leveldb {
                 }
             };
             Ok((uuid, data))
-        }).collect::<Result<Vec<(Uuid, u32)>, String>>()
+        }).collect::<Result<Vec<(Arc<Uuid>, u32)>, String>>()
     }
 }
 
@@ -163,7 +166,7 @@ mod tests {
             // add one message
             // force out of scope
             let mut level = Leveldb::new(&tmp_dir).unwrap();
-            level.add(uuid, msg.clone(), msg_byte_size).unwrap();
+            level.add(uuid.clone(), msg.clone(), msg_byte_size).unwrap();
         }
         // get level instance
         let mut level = Leveldb::new(&tmp_dir).unwrap();
@@ -171,16 +174,16 @@ mod tests {
         // fetch messages
         let msgs = level.fetch().unwrap();
         assert_eq!(1, msgs.len());
-        let (received_uuid, received_msg_byte_size) = msgs[0];
-        assert_eq!(uuid, received_uuid);
-        assert_eq!(msg_byte_size, received_msg_byte_size);
+        let (received_uuid, received_msg_byte_size) = &msgs[0];
+        assert_eq!(uuid, received_uuid.clone());
+        assert_eq!(msg_byte_size, *received_msg_byte_size);
 
         // get msg
-        let received_msg = level.get(uuid).unwrap();
+        let received_msg = level.get(uuid.clone()).unwrap();
         assert_eq!(msg, received_msg);
 
         // delete msg
-        level.del(uuid).unwrap();
+        level.del(uuid.clone()).unwrap();
 
         let get_msg_result = level.get(uuid);
         assert!(get_msg_result.is_err());
